@@ -1,18 +1,24 @@
 use core::{f64, fmt};
 
-use egui::{ComboBox, DragValue};
+use egui::{ComboBox, DragValue, TopBottomPanel};
 use egui_extras::{Column, TableBuilder};
 use egui_plot::{Line, PlotPoints};
-use num_complex::{Complex, ComplexFloat};
+use num_complex::Complex;
 
 #[derive(Default)]
 pub struct TemplateApp {
     functions: Vec<InputData>,
+    num_samples: usize,
+    input_signal_range: f64,
 }
 
 impl TemplateApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        Default::default()
+        Self {
+            num_samples: 1000,
+            input_signal_range: 3.14,
+            ..Default::default()
+        }
     }
 }
 
@@ -21,6 +27,7 @@ struct InputData {
     function: PeriodicFunction,
     amplitude: f64,
     frequency: f64,
+    y_shift: f64,
 }
 
 #[derive(Clone, PartialEq)]
@@ -47,6 +54,7 @@ impl eframe::App for TemplateApp {
                     .striped(true)
                     .column(Column::auto())
                     .column(Column::auto())
+                    .column(Column::auto())
                     .column(Column::auto());
                 wave_table
                     .header(25.0, |mut header| {
@@ -59,10 +67,14 @@ impl eframe::App for TemplateApp {
                         header.col(|ui| {
                             ui.heading("Frequency");
                         });
+                        header.col(|ui| {
+                            ui.heading("Y Shift");
+                        });
                     })
                     .body(|body| {
                         body.rows(25.0, self.functions.len(), |mut row| {
-                            let function = &mut self.functions[row.index()];
+                            let index = row.index();
+                            let function = &mut self.functions[index];
 
                             row.col(|ui| {
                                 ComboBox::from_id_salt("function")
@@ -86,6 +98,9 @@ impl eframe::App for TemplateApp {
                             row.col(|ui| {
                                 ui.add(DragValue::new(&mut function.frequency).speed(0.1));
                             });
+                            row.col(|ui| {
+                                ui.add(DragValue::new(&mut function.y_shift).speed(0.1));
+                            });
                         });
                     });
 
@@ -94,8 +109,25 @@ impl eframe::App for TemplateApp {
                         function: PeriodicFunction::Sin,
                         amplitude: 1.0,
                         frequency: 1.0,
+                        y_shift: 0.0,
                     });
                 }
+
+                TopBottomPanel::bottom("bottom_controls").show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Number of samples");
+                        ui.add(DragValue::new(&mut self.num_samples).speed(1.0));
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Input signal range");
+                        ui.add(
+                            DragValue::new(&mut self.input_signal_range)
+                                .speed(0.1)
+                                .range(0.0..=100.0),
+                        );
+                    });
+                });
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -112,7 +144,10 @@ impl eframe::App for TemplateApp {
                             PeriodicFunction::Cos => f64::cos,
                         };
                         plot_ui.line(Line::new(PlotPoints::from_explicit_callback(
-                            move |x| applied_function(x * function.frequency) * function.amplitude,
+                            move |x| {
+                                applied_function(x * function.frequency) * function.amplitude
+                                    + function.y_shift
+                            },
                             f64::NEG_INFINITY..=f64::INFINITY,
                             10000,
                         )));
@@ -124,31 +159,18 @@ impl eframe::App for TemplateApp {
                 .link_cursor("cursor_link", [true, true].into())
                 .link_axis("axes_group", [true, true])
                 .show(ui, |plot_ui| {
-                    let mut input = Vec::new();
-                    let num_samples = i32::pow(2, 15) as usize;
-                    let step_size = 100.0 / num_samples as f64;
+                    let input = get_combined_wave(
+                        self.functions.clone(),
+                        self.num_samples,
+                        self.input_signal_range,
+                    );
 
-                    let mut i = 0.0;
-                    while i < 10.0 {
-                        let mut sum = 0.0;
-                        for function in self.functions.iter() {
-                            let applied_function = match function.function {
-                                PeriodicFunction::Sin => f64::sin,
-                                PeriodicFunction::Cos => f64::cos,
-                            };
-                            sum += applied_function(i * function.frequency) * function.amplitude;
-                        }
-                        input.push(sum);
-                        i += step_size;
-                    }
-
-                    let input_len = input.len() as f64;
-
-                    plot_ui.line(Line::new(PlotPoints::from_explicit_callback(
-                        move |x| input[(x / step_size) as usize].re(),
-                        0.0..=10.0,
-                        input_len as usize,
-                    )));
+                    plot_ui.line(Line::new(
+                        input
+                            .iter()
+                            .map(|(x, y)| [*x, y.re])
+                            .collect::<PlotPoints>(),
+                    ));
                 });
 
             egui_plot::Plot::new("Frequency Plot")
@@ -156,35 +178,55 @@ impl eframe::App for TemplateApp {
                 .clamp_grid(true)
                 .link_cursor("cursor_link", [true, true].into())
                 .show(ui, |plot_ui| {
-                    let mut input: Vec<Complex<f64>> = Vec::new();
-                    let num_samples = i32::pow(2, 15) as usize;
-                    let step_size = 100.0 / num_samples as f64;
+                    let mut input = get_combined_wave(
+                        self.functions.clone(),
+                        self.num_samples,
+                        self.input_signal_range,
+                    );
 
-                    let mut i = 0.0;
-                    while i < 10.0 {
-                        let mut sum = 0.0;
-                        for function in self.functions.iter() {
-                            let applied_function = match function.function {
-                                PeriodicFunction::Sin => f64::sin,
-                                PeriodicFunction::Cos => f64::cos,
-                            };
-                            sum += applied_function(i * function.frequency) * function.amplitude;
-                        }
-                        input.push(sum.into());
-                        i += step_size;
-                    }
+                    let mut new_input = input.iter().map(|(_, y)| *y).collect::<Vec<_>>();
+                    fft(&mut new_input);
 
-                    fft(&mut input);
+                    input = input
+                        .iter()
+                        .zip(new_input.iter())
+                        .map(|((x, _), y)| (*x, *y))
+                        .collect();
 
-                    let input_len = input.len() as f64;
-                    plot_ui.line(Line::new(PlotPoints::from_explicit_callback(
-                        move |x| input[(x / step_size) as usize].re() * 0.001,
-                        0.0..=10.0,
-                        input_len as usize,
-                    )));
+                    plot_ui.line(Line::new(
+                        input
+                            .iter()
+                            .map(|(x, y)| [*x, y.re])
+                            .collect::<PlotPoints>(),
+                    ));
                 });
         });
     }
+}
+
+fn get_combined_wave(
+    functions: Vec<InputData>,
+    num_samples: usize,
+    input_signal_range: f64,
+) -> Vec<(f64, Complex<f64>)> {
+    let step_size = input_signal_range / num_samples as f64;
+    let mut input = Vec::new();
+
+    let mut i = 0.0;
+    while i < input_signal_range {
+        let mut sum = 0.0;
+        for function in functions.iter() {
+            let applied_function = match function.function {
+                PeriodicFunction::Sin => f64::sin,
+                PeriodicFunction::Cos => f64::cos,
+            };
+            sum += applied_function(i * function.frequency) * function.amplitude + function.y_shift;
+        }
+        input.push((i, sum.into()));
+        i += step_size;
+    }
+
+    input
 }
 
 fn fft(input: &mut [Complex<f64>]) {
