@@ -53,9 +53,9 @@ impl eframe::App for TemplateApp {
                 let wave_table = TableBuilder::new(ui)
                     .striped(true)
                     .column(Column::auto())
-                    .column(Column::auto())
-                    .column(Column::auto())
-                    .column(Column::auto());
+                    .column(Column::exact(100.0))
+                    .column(Column::exact(100.0))
+                    .column(Column::exact(100.0));
                 wave_table
                     .header(25.0, |mut header| {
                         header.col(|ui| {
